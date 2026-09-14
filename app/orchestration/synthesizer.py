@@ -1,0 +1,33 @@
+from app.infrastructure import LanguageModel, ModelGatewayError
+from app.models import TaskResult, TaskStatus
+
+
+class ResponseSynthesizer:
+    def __init__(self, language_model: LanguageModel | None) -> None:
+        self._language_model = language_model
+
+    async def synthesize(self, *, user_input: str, results: list[TaskResult]) -> str:
+        if self._language_model is not None:
+            try:
+                return await self._language_model.synthesize(user_input, results)
+            except ModelGatewayError:
+                # Never hide a completed business operation behind a wording-model outage.
+                return self._deterministic_response(results)
+        return self._deterministic_response(results)
+
+    @staticmethod
+    def _deterministic_response(results: list[TaskResult]) -> str:
+        pending = [r for r in results if r.status is TaskStatus.PENDING_CONFIRMATION]
+        failures = [r for r in results if r.status is TaskStatus.FAILED]
+        if pending:
+            return "订单信息已核验。创建售后申请会产生实际业务变更，请确认后继续。"
+        if failures:
+            return "处理未完成：" + "；".join(r.error or "未知错误" for r in failures)
+        final = results[-1].data
+        if final.get("eligible") is False:
+            return str(final.get("reason", "该订单不符合售后规则。"))
+        if final.get("ticket_id"):
+            return f"售后申请已创建，工单号为 {final['ticket_id']}。"
+        if final.get("order_id"):
+            return f"订单 {final['order_id']} 当前状态为 {final['status']}。"
+        return str(final.get("answer", "处理完成。"))
