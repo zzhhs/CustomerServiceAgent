@@ -7,14 +7,14 @@ from typing import cast
 from langgraph.graph import END, START, StateGraph
 
 from app.infrastructure import ModelGatewayError
-from app.models import RoutePlan, TaskResult, TaskStatus
+from app.models import PendingUserInput, RoutePlan, TaskResult, TaskStatus
 from app.observability import Observability
-from app.orchestration.planner import DeterministicPlanner, Planner
+from app.orchestration.planner import DeterministicPlanner, Planner, extract_order_id
 from app.orchestration.scheduler import TaskScheduler
 from app.orchestration.state import CustomerServiceState
 from app.orchestration.synthesizer import ResponseSynthesizer
 from app.orchestration.validator import InvalidPlanError, PlanValidator
-from app.repositories import PendingActionRepository
+from app.repositories import ConversationRepository, PendingActionRepository
 
 
 class CustomerServiceGraph:
@@ -26,6 +26,7 @@ class CustomerServiceGraph:
         scheduler: TaskScheduler,
         synthesizer: ResponseSynthesizer,
         pending_actions: PendingActionRepository,
+        conversations: ConversationRepository,
         observability: Observability,
         max_replans: int = 1,
         max_attempts: int = 3,
@@ -36,6 +37,7 @@ class CustomerServiceGraph:
         self._scheduler = scheduler
         self._synthesizer = synthesizer
         self._pending_actions = pending_actions
+        self._conversations = conversations
         self._observability = observability
         self._max_replans = max_replans
         self._max_attempts = max_attempts
@@ -44,13 +46,16 @@ class CustomerServiceGraph:
         self._logger = logging.getLogger("customer_service.orchestrator")
 
         builder = StateGraph(CustomerServiceState)
+        builder.add_node("load_context", self._load_context)
         builder.add_node("prepare", self._prepare)
         builder.add_node("plan", self._plan)
         builder.add_node("validate", self._validate)
         builder.add_node("execute", self._execute)
         builder.add_node("replan", self._replan)
         builder.add_node("synthesize", self._synthesize)
-        builder.add_edge(START, "prepare")
+        builder.add_node("update_memory", self._update_memory)
+        builder.add_edge(START, "load_context")
+        builder.add_edge("load_context", "prepare")
         builder.add_conditional_edges(
             "prepare", self._next_after_prepare, {"plan": "plan", "validate": "validate"}
         )
@@ -62,7 +67,8 @@ class CustomerServiceGraph:
             {"replan": "replan", "synthesize": "synthesize"},
         )
         builder.add_edge("replan", "validate")
-        builder.add_edge("synthesize", END)
+        builder.add_edge("synthesize", "update_memory")
+        builder.add_edge("update_memory", END)
         self._graph = builder.compile()
 
     async def invoke(self, state: CustomerServiceState) -> CustomerServiceState:
@@ -76,6 +82,32 @@ class CustomerServiceGraph:
         with self._observability.span("orchestration.invoke", attributes):
             result = await self._graph.ainvoke(state)
         return cast(CustomerServiceState, result)
+
+    async def _load_context(self, state: CustomerServiceState) -> dict[str, object]:
+        context = await self._conversations.load(
+            user_id=state["user_id"], conversation_id=state["conversation_id"]
+        )
+        raw_input = state["user_input"]
+        resumed = False
+        effective_input = raw_input
+        if (
+            "confirmation_token" not in state
+            and context.pending_input is not None
+            and "order_id" in context.pending_input.missing_fields
+            and extract_order_id(raw_input) is not None
+        ):
+            effective_input = (
+                f"{raw_input}\n继续完成之前的请求："
+                f"{context.pending_input.original_user_input}"
+            )
+            resumed = True
+        return {
+            "raw_user_input": raw_input,
+            "user_input": effective_input,
+            "conversation_messages": context.messages,
+            "pending_user_input": context.pending_input,
+            "resumed_pending_input": resumed,
+        }
 
     async def _prepare(self, state: CustomerServiceState) -> dict[str, object]:
         token = state.get("confirmation_token")
@@ -138,10 +170,17 @@ class CustomerServiceGraph:
         requires_confirmation = any(
             result.status is TaskStatus.PENDING_CONFIRMATION for result in results
         )
+        needs_input = [
+            result for result in results if result.status is TaskStatus.NEEDS_INPUT
+        ]
         update: dict[str, object] = {
             "task_results": results,
             "execution_history": [*state.get("execution_history", []), *results],
             "requires_confirmation": requires_confirmation,
+            "requires_input": bool(needs_input),
+            "requested_fields": (
+                list(needs_input[0].data.get("missing_fields", [])) if needs_input else []
+            ),
         }
         if requires_confirmation:
             order_id = self._successful_order_id(results)
@@ -156,6 +195,8 @@ class CustomerServiceGraph:
 
     def _next_after_execute(self, state: CustomerServiceState) -> str:
         if state["confirmation_authorized"]:
+            return "synthesize"
+        if any(result.status is TaskStatus.NEEDS_INPUT for result in state["task_results"]):
             return "synthesize"
         if any(
             result.status is TaskStatus.PENDING_CONFIRMATION
@@ -234,6 +275,26 @@ class CustomerServiceGraph:
     async def _synthesize(self, state: CustomerServiceState) -> dict[str, str]:
         with self._observability.span("orchestration.synthesize"):
             text = await self._synthesizer.synthesize(
-                user_input=state["user_input"], results=state["task_results"]
+                user_input=state["user_input"],
+                results=state["task_results"],
+                conversation_messages=state.get("conversation_messages", []),
             )
         return {"final_response": text}
+
+    async def _update_memory(self, state: CustomerServiceState) -> dict[str, object]:
+        pending_input = None
+        if state.get("requires_input", False):
+            pending_input = PendingUserInput(
+                original_user_input=state["user_input"],
+                missing_fields=state.get("requested_fields", []),
+            )
+        elif not state.get("resumed_pending_input", False):
+            pending_input = state.get("pending_user_input")
+        await self._conversations.record_turn(
+            user_id=state["user_id"],
+            conversation_id=state["conversation_id"],
+            user_input=state.get("raw_user_input", state["user_input"]),
+            assistant_response=state["final_response"],
+            pending_input=pending_input,
+        )
+        return {}

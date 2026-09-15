@@ -1,12 +1,18 @@
 from typing import cast
 
 from app.infrastructure import LanguageModel, ModelGatewayError
-from app.models import TaskResult, TaskStatus
+from app.models import ConversationMessage, TaskResult, TaskStatus
 from app.orchestration.synthesizer import ResponseSynthesizer
 
 
 class FailingSynthesisModel:
-    async def synthesize(self, user_input: str, results: list[TaskResult]) -> str:
+    async def synthesize(
+        self,
+        user_input: str,
+        results: list[TaskResult],
+        *,
+        conversation_messages: list[ConversationMessage],
+    ) -> str:
         raise ModelGatewayError("temporary outage")
 
 

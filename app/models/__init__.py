@@ -3,11 +3,14 @@ from app.models.domain import (
     AfterSalesResult,
     AgentDecision,
     AgentName,
+    ConversationContext,
+    ConversationMessage,
     Eligibility,
     KnowledgeDocument,
     KnowledgeHit,
     OrderResult,
     PendingAction,
+    PendingUserInput,
     QAResult,
     RoutePlan,
     SubTask,
@@ -20,8 +23,8 @@ from app.models.domain import (
 
 __all__ = [
     "AfterSalesResult", "AgentDecision", "AgentName", "ChatRequest", "ChatResponse",
-    "Eligibility", "HealthResponse", "KnowledgeDocument", "KnowledgeHit", "OrderResult",
-    "PendingAction",
+    "ConversationContext", "ConversationMessage", "Eligibility", "HealthResponse",
+    "KnowledgeDocument", "KnowledgeHit", "OrderResult", "PendingAction", "PendingUserInput",
     "QAResult", "RoutePlan", "SubTask", "TaskAction", "TaskResult", "TaskStatus",
     "TicketRecord", "ToolDefinition",
 ]

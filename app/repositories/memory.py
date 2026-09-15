@@ -3,7 +3,15 @@ import secrets
 from asyncio import Lock
 from datetime import UTC, datetime, timedelta
 
-from app.models import OrderResult, PendingAction, RoutePlan, TicketRecord
+from app.models import (
+    ConversationContext,
+    ConversationMessage,
+    OrderResult,
+    PendingAction,
+    PendingUserInput,
+    RoutePlan,
+    TicketRecord,
+)
 
 
 class InvalidConfirmationError(ValueError):
@@ -27,7 +35,48 @@ class InMemoryDatabase:
         }
         self.tickets_by_key: dict[str, TicketRecord] = {}
         self.pending_actions: dict[str, PendingAction] = {}
+        self.conversations: dict[tuple[str, str], ConversationContext] = {}
         self.lock = Lock()
+
+
+class ConversationRepository:
+    """Process-local conversation history with resumable missing-input state."""
+
+    def __init__(self, database: InMemoryDatabase, *, max_messages: int = 20) -> None:
+        self._database = database
+        self._max_messages = max_messages
+
+    async def load(self, *, user_id: str, conversation_id: str) -> ConversationContext:
+        key = (user_id, conversation_id)
+        async with self._database.lock:
+            context = self._database.conversations.get(key)
+            if context is None:
+                return ConversationContext(user_id=user_id, conversation_id=conversation_id)
+            return context.model_copy(deep=True)
+
+    async def record_turn(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        user_input: str,
+        assistant_response: str,
+        pending_input: PendingUserInput | None,
+    ) -> None:
+        key = (user_id, conversation_id)
+        async with self._database.lock:
+            current = self._database.conversations.get(key)
+            messages = list(current.messages) if current is not None else []
+            messages.extend([
+                ConversationMessage(role="user", content=user_input),
+                ConversationMessage(role="assistant", content=assistant_response),
+            ])
+            self._database.conversations[key] = ConversationContext(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                messages=messages[-self._max_messages :],
+                pending_input=pending_input,
+            )
 
 
 class OrderRepository:

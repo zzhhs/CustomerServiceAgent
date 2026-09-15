@@ -74,7 +74,7 @@ class ModelPlanner:
 
 
 def extract_order_id(text: str) -> str | None:
-    match = re.search(r"\b[A-Za-z][A-Za-z0-9-]{2,31}\b", text)
+    match = re.search(r"\b(?=[A-Za-z0-9-]*\d)[A-Za-z][A-Za-z0-9-]{2,31}\b", text)
     return match.group(0).upper() if match else None
 
 

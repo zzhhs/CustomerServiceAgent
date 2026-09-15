@@ -5,9 +5,18 @@
 当前版本提供一条可运行的纵向链路：
 
 ```text
-HTTP API → Orchestrator → Plan Validator → Task Scheduler
-         → QA / Order / After-sales → Result Aggregator
+HTTP API → Load Context → Orchestrator → Plan Validator → Task Scheduler
+         → QA / Order / After-sales → Result Aggregator → Update Memory
 ```
+
+`TaskScheduler` 按依赖关系动态释放任务：同一就绪层中互不依赖的任务并发执行，下游任务
+会等待所有前置依赖完成；任一依赖失败时，对应下游任务不会执行。
+
+系统会在进程内保存最近的会话消息，并记录尚未补齐的业务字段。例如用户先说“我要申请
+退货”，系统会返回 `requires_input=true` 和 `requested_fields=["order_id"]`；用户在同一
+会话中补充订单号后，系统会恢复原始退货目标并继续执行。该会话存储是数据库接入前的
+临时实现，服务重启后会清空。回复生成器会读取同一用户、同一会话的最近历史，根据已有
+的称呼、语气和详略偏好调整回复；订单状态等业务事实仍只采用本轮工具执行结果。
 
 执行失败时，编排器现在支持有预算的闭环：
 

@@ -18,6 +18,8 @@ class ChatResponse(BaseModel):
     conversation_id: str
     response: str
     requires_confirmation: bool
+    requires_input: bool = False
+    requested_fields: list[str] = Field(default_factory=list)
     confirmation_token: str | None = None
     plan: RoutePlan
     results: list[TaskResult]

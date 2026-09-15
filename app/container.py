@@ -8,6 +8,7 @@ from app.orchestration.scheduler import TaskScheduler
 from app.orchestration.synthesizer import ResponseSynthesizer
 from app.orchestration.validator import PlanValidator
 from app.repositories import (
+    ConversationRepository,
     InMemoryDatabase,
     InMemoryVectorStore,
     OrderRepository,
@@ -50,6 +51,7 @@ def build_graph(
     pending_actions = PendingActionRepository(
         database, ttl_seconds=settings.confirmation_ttl_seconds
     )
+    conversations = ConversationRepository(database)
     vector_store = InMemoryVectorStore()
     qa_agent = QAAgent(
         knowledge_service=KnowledgeService(vector_store),
@@ -78,6 +80,7 @@ def build_graph(
         scheduler=scheduler,
         synthesizer=ResponseSynthesizer(language_model),
         pending_actions=pending_actions,
+        conversations=conversations,
         observability=active_observability,
         max_replans=settings.max_replans,
         max_attempts=settings.task_max_attempts,

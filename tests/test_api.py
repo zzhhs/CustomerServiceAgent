@@ -138,6 +138,33 @@ async def test_plain_question_routes_to_qa(client: AsyncClient) -> None:
     assert response.json()["plan"]["tasks"][0]["agent"] == "qa"
 
 
+async def test_missing_order_id_can_be_supplied_in_next_turn(client: AsyncClient) -> None:
+    first = await client.post("/api/v1/chat", json={
+        "user_id": "user-1",
+        "conversation_id": "conversation-slot-filling",
+        "message": "我要申请退货",
+    })
+
+    assert first.status_code == 200
+    assert first.json()["requires_input"] is True
+    assert first.json()["requested_fields"] == ["order_id"]
+    assert first.json()["results"][0]["status"] == "needs_input"
+
+    resumed = await client.post("/api/v1/chat", json={
+        "user_id": "user-1",
+        "conversation_id": "conversation-slot-filling",
+        "message": "订单号是 A123",
+    })
+
+    body = resumed.json()
+    assert resumed.status_code == 200
+    assert body["requires_input"] is False
+    assert body["requires_confirmation"] is True
+    assert body["metadata"]["resumed_pending_input"] is True
+    assert body["metadata"]["context_message_count"] == 2
+    assert [task["agent"] for task in body["plan"]["tasks"]] == ["order", "after_sales"]
+
+
 async def test_signed_auth_ignores_body_user_id() -> None:
     secret = "test-secret-that-is-long-enough-for-hmac"
     signed_app = create_app(Settings(

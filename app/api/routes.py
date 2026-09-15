@@ -44,6 +44,8 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
         conversation_id=payload.conversation_id,
         response=result["final_response"],
         requires_confirmation=result["requires_confirmation"],
+        requires_input=result.get("requires_input", False),
+        requested_fields=result.get("requested_fields", []),
         confirmation_token=result.get("issued_confirmation_token"),
         plan=result["route_plan"],
         results=result["task_results"],
@@ -53,6 +55,8 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
             "total_task_attempts": sum(
                 task.attempts for task in result["execution_history"]
             ),
+            "context_message_count": len(result.get("conversation_messages", [])),
+            "resumed_pending_input": result.get("resumed_pending_input", False),
         },
     )
 

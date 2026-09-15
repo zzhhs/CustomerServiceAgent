@@ -19,6 +19,7 @@ class TaskAction(StrEnum):
 
 class TaskStatus(StrEnum):
     SUCCEEDED = "succeeded"
+    NEEDS_INPUT = "needs_input"
     PENDING_CONFIRMATION = "pending_confirmation"
     REJECTED = "rejected"
     FAILED = "failed"
@@ -102,6 +103,23 @@ class PendingAction(BaseModel):
     operation: Literal["return"]
     expires_at: datetime
     consumed_at: datetime | None = None
+
+
+class ConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class PendingUserInput(BaseModel):
+    original_user_input: str
+    missing_fields: list[str]
+
+
+class ConversationContext(BaseModel):
+    user_id: str
+    conversation_id: str
+    messages: list[ConversationMessage] = Field(default_factory=list)
+    pending_input: PendingUserInput | None = None
 
 
 class Eligibility(BaseModel):
